@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { LogIn, Lock, User, FlaskConical, Eye, EyeOff } from 'lucide-react';
 import Logo from '../components/Logo';
 import { UserRole } from '../types';
+import { loginUser } from '../services/firebaseService';
 
 interface LoginProps {
   onLogin: (user: any) => void;
@@ -13,16 +14,40 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
+    setError('');
+    
     const cleanUser = username.trim();
     
+    // Keep hardcoded admin for backwards compatibility
     if (cleanUser === 'admin' && password === 'F@res222') {
       onLogin({ id: 'admin-main', name: 'د. فارس (مدير المختبر)', username: 'admin', role: UserRole.ADMIN });
+      setLoading(false);
       return;
     }
 
+    // Try Firebase authentication - convert username to email format
+    const userEmail = `${cleanUser}@elmostaqbal-lab.com`;
+    const result = await loginUser(userEmail, password);
+    
+    if (result.success && result.user) {
+      // Fetch user additional data from Firebase
+      onLogin({ 
+        id: result.user?.uid || 'u_' + cleanUser, 
+        name: result.user?.displayName || cleanUser, 
+        username: cleanUser, 
+        email: userEmail,
+        role: UserRole.CLIENT // Default role, should be fetched from Firebase
+      });
+      setLoading(false);
+      return;
+    }
+
+    // Fallback: try localStorage for existing accounts
     const managedAccounts = JSON.parse(localStorage.getItem('lab_managed_accounts') || '{}');
     const userAccount = managedAccounts[cleanUser];
 
@@ -33,10 +58,12 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         username: cleanUser, 
         role: userAccount.role 
       });
+      setLoading(false);
       return;
     }
 
     setError('خطأ في بيانات الدخول. يرجى مراجعة الإدارة.');
+    setLoading(false);
   };
 
   return (
@@ -109,9 +136,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
               <button
                 type="submit"
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-6 rounded-[2.2rem] font-black text-xl transition-all shadow-2xl shadow-blue-200 flex items-center justify-center gap-4 transform active:scale-95 group"
+                disabled={loading}
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-6 rounded-[2.2rem] font-black text-xl transition-all shadow-2xl shadow-blue-200 flex items-center justify-center gap-4 transform active:scale-95 group"
               >
-                <span>دخول</span>
+                <span>{loading ? 'جاري الدخول...' : 'دخول'}</span>
                 <LogIn size={26} className="group-hover:translate-x-[-6px] transition-transform" />
               </button>
             </form>
