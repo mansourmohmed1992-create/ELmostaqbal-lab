@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserPlus, Shield, User as UserIcon, Trash2, Key, Users, CheckCircle2, MessageCircle, MapPin, Clock, Upload, FileText, Image as ImageIcon, X, Eye } from 'lucide-react';
 import { User, UserRole, LabTest } from '../types';
+import { getData, saveData, subscribeToData } from '../services/firebaseService';
 
 const Admin = () => {
   // تحميل الحسابات من localStorage لضمان استمرارها
@@ -18,26 +19,26 @@ const Admin = () => {
   const [resultNotes, setResultNotes] = useState('');
 
   useEffect(() => {
-    // تحميل البيانات الأولية
-    const loadData = () => {
+    // تحميل البيانات الأولية من Firebase
+    const loadData = async () => {
       try {
-        const managed = JSON.parse(localStorage.getItem('lab_managed_accounts') || '{}');
-        const userList: User[] = Object.keys(managed).map(username => ({
-          id: managed[username].id,
-          name: managed[username].name,
+        // Load users/accounts
+        const managedAccounts = await getData('lab/managed_accounts');
+        const userList: User[] = managedAccounts ? Object.keys(managedAccounts).map(username => ({
+          id: managedAccounts[username].id,
+          name: managedAccounts[username].name,
           username: username,
-          role: managed[username].role
-        }));
+          role: managedAccounts[username].role
+        })) : [];
         setUsers(userList);
 
-        // تحميل طلبات الحجز الجديدة
-        const allTests: LabTest[] = JSON.parse(localStorage.getItem('lab_all_tests') || '[]');
+        // Load all tests
+        const allTests: LabTest[] = await getData('lab/all_tests') || [];
         console.log('📦 جميع الطلبات المحفوظة:', allTests);
         
         const newRequests = allTests.filter(t => t.status === 'طلب عميل');
         console.log('🆕 طلبات جديدة فقط:', newRequests);
         
-        // الطلبات المعلقة (التي لم يتم رفع نتائجها)
         const pending = allTests.filter(t => 
           (t.status === 'طلب عميل' || t.status === 'قيد الانتظار') && 
           (!t.results || t.results.length === 0)
@@ -45,27 +46,47 @@ const Admin = () => {
         
         setBookingRequests(newRequests);
         setPendingResults(pending);
-        // تحميل إشعارات الموظفين
-        const notifs = JSON.parse(localStorage.getItem('lab_staff_notifications') || '[]');
+        
+        // Load notifications
+        const notifs = await getData('lab/staff_notifications') || [];
         setStaffNotifs(notifs);
       } catch (error) {
         console.error('❌ خطأ في تحميل البيانات:', error);
       }
     };
 
-    // تشغيل أول مرة
     loadData();
 
-    // تحديث طلبات الحجز كل ثانية واحدة
-    const interval = setInterval(loadData, 1000);
+    // Set up real-time listeners for data changes
+    const unsubscriber1 = subscribeToData('lab/all_tests', (data) => {
+      if (data) {
+        const newRequests = data.filter((t: LabTest) => t.status === 'طلب عميل');
+        const pending = data.filter((t: LabTest) => 
+          (t.status === 'طلب عميل' || t.status === 'قيد الانتظار') && 
+          (!t.results || t.results.length === 0)
+        );
+        setBookingRequests(newRequests);
+        setPendingResults(pending);
+      }
+    });
 
-    return () => clearInterval(interval);
+    const unsubscriber2 = subscribeToData('lab/staff_notifications', (data) => {
+      if (data) {
+        setStaffNotifs(data);
+      }
+    });
+
+    return () => {
+      // Cleanup listeners
+      unsubscriber1();
+      unsubscriber2();
+    };
   }, []);
 
-  const handleAddUser = (e: React.FormEvent) => {
+  const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    const managed = JSON.parse(localStorage.getItem('lab_managed_accounts') || '{}');
+    const managed = await getData('lab/managed_accounts') || {};
     
     if (managed[newUser.username]) {
       alert("اسم المستخدم هذا موجود بالفعل!");
@@ -74,7 +95,7 @@ const Admin = () => {
 
     const userId = Math.random().toString(36).substr(2, 9);
     
-    // إضافة الحساب الجديد لقاعدة البيانات
+    // إضافة الحساب الجديد إلى Firebase
     managed[newUser.username] = {
       id: userId,
       password: newUser.password,
@@ -82,7 +103,7 @@ const Admin = () => {
       role: newUser.role
     };
 
-    localStorage.setItem('lab_managed_accounts', JSON.stringify(managed));
+    await saveData('lab/managed_accounts', managed);
 
     const updatedUser: User = {
       id: userId,
@@ -98,11 +119,11 @@ const Admin = () => {
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
-  const handleDeleteUser = (username: string) => {
+  const handleDeleteUser = async (username: string) => {
     if (confirm(`هل أنت متأكد من حذف حساب ${username}؟`)) {
-      const managed = JSON.parse(localStorage.getItem('lab_managed_accounts') || '{}');
+      const managed = await getData('lab/managed_accounts') || {};
       delete managed[username];
-      localStorage.setItem('lab_managed_accounts', JSON.stringify(managed));
+      await saveData('lab/managed_accounts', managed);
       setUsers(users.filter(u => u.username !== username));
     }
   };
@@ -117,35 +138,35 @@ const Admin = () => {
     window.open(`https://wa.me/+${fullPhone}?text=${message}`, '_blank');
   };
 
-  const updateRequestStatus = (requestId: string, newStatus: 'تم الإرسال' | 'مكتمل') => {
-    const allTests: LabTest[] = JSON.parse(localStorage.getItem('lab_all_tests') || '[]');
+  const updateRequestStatus = async (requestId: string, newStatus: 'تم الإرسال' | 'مكتمل') => {
+    const allTests: LabTest[] = await getData('lab/all_tests') || [];
     const updated = allTests.map(t => t.id === requestId ? {...t, status: newStatus} : t);
-    localStorage.setItem('lab_all_tests', JSON.stringify(updated));
+    await saveData('lab/all_tests', updated);
     
     // تحديث الحالة فوراً
     const newRequests = updated.filter(t => t.status === 'طلب عميل');
     setBookingRequests(newRequests);
   };
 
-  const refreshRequests = () => {
-    const allTests: LabTest[] = JSON.parse(localStorage.getItem('lab_all_tests') || '[]');
+  const refreshRequests = async () => {
+    const allTests: LabTest[] = await getData('lab/all_tests') || [];
     const newRequests = allTests.filter(t => t.status === 'طلب عميل');
     setBookingRequests(newRequests);
     console.log('✅ تم تحديث الطلبات:', newRequests);
   };
 
-  const markNotificationContacted = (notifId: string) => {
-    const notifs = JSON.parse(localStorage.getItem('lab_staff_notifications') || '[]');
+  const markNotificationContacted = async (notifId: string) => {
+    const notifs = await getData('lab/staff_notifications') || [];
     const updated = notifs.map((n: any) => n.id === notifId ? {...n, status: 'contacted', contactedAt: new Date().toISOString()} : n);
-    localStorage.setItem('lab_staff_notifications', JSON.stringify(updated));
+    await saveData('lab/staff_notifications', updated);
     setStaffNotifs(updated);
 
     // أيضاً حدث حالة الطلب المرتبط إن وُجد
     const notif = updated.find((n: any) => n.id === notifId);
     if (notif && notif.testRequestId) {
-      const allTests: LabTest[] = JSON.parse(localStorage.getItem('lab_all_tests') || '[]');
+      const allTests: LabTest[] = await getData('lab/all_tests') || [];
       const updatedTests = allTests.map(t => t.id === notif.testRequestId ? {...t, status: 'تم الإرسال'} : t);
-      localStorage.setItem('lab_all_tests', JSON.stringify(updatedTests));
+      await saveData('lab/all_tests', updatedTests);
       setPendingResults(updatedTests.filter(t => (t.status === 'طلب عميل' || t.status === 'قيد الانتظار') && (!t.results || t.results.length === 0)));
     }
   };
@@ -209,8 +230,8 @@ const Admin = () => {
         });
       }
 
-      // حفظ النتائج
-      const allTests: LabTest[] = JSON.parse(localStorage.getItem('lab_all_tests') || '[]');
+      // حفظ النتائج في Firebase
+      const allTests: LabTest[] = await getData('lab/all_tests') || [];
       const updated = allTests.map(t => {
         if (t.id === selectedResultTest.id) {
           return {
@@ -224,7 +245,7 @@ const Admin = () => {
         return t;
       });
       
-      localStorage.setItem('lab_all_tests', JSON.stringify(updated));
+      await saveData('lab/all_tests', updated);
       
       // إرسال واتس للمريض
       sendWhatsAppResultNotification(selectedResultTest, uploadedFiles);

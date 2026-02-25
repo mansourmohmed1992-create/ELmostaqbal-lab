@@ -11,27 +11,48 @@ import ClientDashboard from './pages/ClientDashboard';
 import HomeTestRequest from './pages/HomeTestRequest';
 import Layout from './components/Layout';
 import { User, AuthState, UserRole } from './types';
+import { getCurrentUser, saveData } from './services/firebaseService';
 
 const App: React.FC = () => {
-  const [auth, setAuth] = useState<AuthState>(() => {
-    try {
-      const saved = localStorage.getItem('lab_auth');
-      if (saved && saved !== "undefined") {
-        return JSON.parse(saved);
-      }
-    } catch (e) {
-      console.error("Auth initialization error:", e);
-    }
-    return { user: null, isAuthenticated: false };
-  });
-  
+  const [auth, setAuth] = useState<AuthState>({ user: null, isAuthenticated: false });
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
+  // Initialize auth from Firebase on mount
   useEffect(() => {
-    try {
-      localStorage.setItem('lab_auth', JSON.stringify(auth));
-    } catch (e) {
-      console.error("Auth save error:", e);
+    const initAuth = async () => {
+      try {
+        const currentUser = await getCurrentUser();
+        if (currentUser) {
+          const user: User = {
+            id: currentUser.uid,
+            name: currentUser.displayName || 'User',
+            username: currentUser.email?.split('@')[0] || 'user',
+            email: currentUser.email || '',
+            role: UserRole.CLIENT
+          };
+          setAuth({ user, isAuthenticated: true });
+        } else {
+          setAuth({ user: null, isAuthenticated: false });
+        }
+      } catch (e) {
+        console.error("Auth initialization error:", e);
+        setAuth({ user: null, isAuthenticated: false });
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    initAuth();
+  }, []);
+
+  useEffect(() => {
+    if (auth.user && auth.isAuthenticated) {
+      try {
+        saveData(`users/${auth.user.id}/authState`, auth);
+      } catch (e) {
+        console.error("Auth save error:", e);
+      }
     }
   }, [auth]);
 
@@ -40,11 +61,23 @@ const App: React.FC = () => {
     navigate('/');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const { logoutUser } = await import('./services/firebaseService');
+    await logoutUser();
     setAuth({ user: null, isAuthenticated: false });
-    localStorage.removeItem('lab_auth');
     navigate('/login');
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-blue-50">
+        <div className="text-center">
+          <div className="w-20 h-20 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 font-bold">جاري التحميل...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!auth.isAuthenticated) {
     return (

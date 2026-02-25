@@ -1,24 +1,54 @@
 import React, { useEffect, useState } from 'react';
 import { CreditCard, DollarSign, PieChart, FileText, Users } from 'lucide-react';
+import { getData, saveData, subscribeToData } from '../services/firebaseService';
 
 const Accounts = () => {
   const [income, setIncome] = useState(0);
   const [expenses, setExpenses] = useState(0);
   const [balance, setBalance] = useState(0);
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [finNeeds, setFinNeeds] = useState<any[]>([]);
 
   useEffect(() => {
-    // Load from localStorage (simple mock data storage)
-    const tx = JSON.parse(localStorage.getItem('lab_fin_transactions') || '[]');
-    setTransactions(tx);
-    const inc = tx.filter((t: any) => t.type === 'income').reduce((s: number, t: any) => s + (t.amount || 0), 0);
-    const exp = tx.filter((t: any) => t.type === 'expense').reduce((s: number, t: any) => s + (t.amount || 0), 0);
-    setIncome(inc);
-    setExpenses(exp);
-    setBalance(inc - exp);
+    // Load from Firebase
+    const loadTransactions = async () => {
+      const tx = await getData('lab/fin_transactions') || [];
+      setTransactions(tx);
+      const inc = (Array.isArray(tx) ? tx : []).filter((t: any) => t.type === 'income').reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      const exp = (Array.isArray(tx) ? tx : []).filter((t: any) => t.type === 'expense').reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      setIncome(inc);
+      setExpenses(exp);
+      setBalance(inc - exp);
+      
+      // Load financial needs
+      const needs = await getData('lab/fin_needs') || [];
+      setFinNeeds(Array.isArray(needs) ? needs : []);
+    };
+    
+    loadTransactions();
+    
+    // Subscribe to real-time updates
+    const unsubscriber1 = subscribeToData('lab/fin_transactions', (data) => {
+      const tx = Array.isArray(data) ? data : [];
+      setTransactions(tx);
+      const inc = tx.filter((t: any) => t.type === 'income').reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      const exp = tx.filter((t: any) => t.type === 'expense').reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      setIncome(inc);
+      setExpenses(exp);
+      setBalance(inc - exp);
+    });
+    
+    const unsubscriber2 = subscribeToData('lab/fin_needs', (data) => {
+      setFinNeeds(Array.isArray(data) ? data : []);
+    });
+    
+    return () => {
+      unsubscriber1();
+      unsubscriber2();
+    };
   }, []);
 
-  const addTransaction = (type: 'income' | 'expense') => {
+  const addTransaction = async (type: 'income' | 'expense') => {
     const label = prompt('أدخل وصف الحركة:');
     if (!label) return;
     const amountStr = prompt('المبلغ بالمصري (EGP):');
@@ -27,21 +57,25 @@ const Accounts = () => {
     if (isNaN(amount)) return alert('المبلغ غير صحيح');
 
     const tx = { id: 'T-' + Math.random().toString(36).substr(2,9), type, label, amount, date: new Date().toISOString() };
-    const all = JSON.parse(localStorage.getItem('lab_fin_transactions') || '[]');
-    all.unshift(tx);
-    localStorage.setItem('lab_fin_transactions', JSON.stringify(all));
-    setTransactions(all);
-    setIncome(all.filter((t: any) => t.type === 'income').reduce((s: number, t: any) => s + (t.amount || 0), 0));
-    setExpenses(all.filter((t: any) => t.type === 'expense').reduce((s: number, t: any) => s + (t.amount || 0), 0));
-    setBalance(prev => type === 'income' ? prev + amount : prev - amount);
+    const all = await getData('lab/fin_transactions') || [];
+    const allArray = Array.isArray(all) ? all : [];
+    allArray.unshift(tx);
+    await saveData('lab/fin_transactions', allArray);
+    setTransactions(allArray);
+    const inc = allArray.filter((t: any) => t.type === 'income').reduce((s: number, t: any) => s + (t.amount || 0), 0);
+    const exp = allArray.filter((t: any) => t.type === 'expense').reduce((s: number, t: any) => s + (t.amount || 0), 0);
+    setIncome(inc);
+    setExpenses(exp);
+    setBalance(inc - exp);
   };
 
-  const markNeeds = () => {
+  const markNeeds = async () => {
     const note = prompt('أدخل احتياج/ملاحظة مالية (مثال: مستلزمات، أجور):');
     if (!note) return;
-    const needs = JSON.parse(localStorage.getItem('lab_fin_needs') || '[]');
-    needs.unshift({ id: 'N-' + Math.random().toString(36).substr(2,9), note, createdAt: new Date().toISOString() });
-    localStorage.setItem('lab_fin_needs', JSON.stringify(needs));
+    const needs = await getData('lab/fin_needs') || [];
+    const needsArray = Array.isArray(needs) ? needs : [];
+    needsArray.unshift({ id: 'N-' + Math.random().toString(36).substr(2,9), note, createdAt: new Date().toISOString() });
+    await saveData('lab/fin_needs', needsArray);
     alert('تم تسجيل الاحتياج');
   };
 
@@ -98,7 +132,7 @@ const Accounts = () => {
       <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
         <h3 className="font-black text-lg mb-4">الاحتياجات والطلبات</h3>
         <div className="space-y-3">
-          {(JSON.parse(localStorage.getItem('lab_fin_needs') || '[]')).map((n: any) => (
+          {finNeeds.map((n: any) => (
             <div key={n.id} className="p-3 rounded-xl border bg-gray-50">
               <p className="font-black">{n.note}</p>
               <p className="text-xs text-gray-400">{new Date(n.createdAt).toLocaleString()}</p>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { MapPin, Phone, User, AlertCircle, CheckCircle2, MessageCircle } from 'lucide-react';
 import { UserRole } from '../types';
+import { getData, saveData } from '../services/firebaseService';
 
 interface HomeTestRequestFormData {
   fullName: string;
@@ -47,7 +48,7 @@ const HomeTestRequest = ({ user }: { user: any }) => {
     );
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // التحقق من الاسم الرباعي
@@ -75,24 +76,25 @@ const HomeTestRequest = ({ user }: { user: any }) => {
     const username = nameParts.slice(0, 2).join('').toLowerCase().replace(/ا/g, 'a');
     const password = Math.random().toString(36).slice(-8);
 
-    // حفظ في المرضى
-    const patients = JSON.parse(localStorage.getItem('lab_patients') || '[]');
+    // حفظ في المرضى (Firebase)
+    const patients = await getData('lab/patients') || [];
+    const patientsArray = Array.isArray(patients) ? patients : [];
     const newPatient = {
       id: Math.random().toString(36).substr(2, 9),
       name: formData.fullName,
       age: parseInt(formData.age),
-      gender: 'ذكر', // يمكن إضافة dropdown لاختيار الجنس
+      gender: 'ذكر',
       phone: formData.phone,
       createdAt: new Date().toLocaleDateString('en-CA'),
       username: username,
       password: password
     };
 
-    patients.push(newPatient);
-    localStorage.setItem('lab_patients', JSON.stringify(patients));
+    patientsArray.push(newPatient);
+    await saveData('lab/patients', patientsArray);
 
-    // حفظ الحساب في قاعدة البيانات الموحدة
-    const managed = JSON.parse(localStorage.getItem('lab_managed_accounts') || '{}');
+    // حفظ الحساب في قاعدة البيانات الموحدة (Firebase)
+    const managed = await getData('lab/managed_accounts') || {};
     managed[username] = {
       password: password,
       name: formData.fullName,
@@ -100,52 +102,52 @@ const HomeTestRequest = ({ user }: { user: any }) => {
       role: UserRole.CLIENT,
       id: newPatient.id
     };
-    localStorage.setItem('lab_managed_accounts', JSON.stringify(managed));
+    await saveData('lab/managed_accounts', managed);
 
-    // إنشاء طلب تحليل (قيد الانتظار)
-    const allTests = JSON.parse(localStorage.getItem('lab_all_tests') || '[]');
+    // إنشاء طلب تحليل (Firebase)
+    const allTests = await getData('lab/all_tests') || [];
+    const testsArray = Array.isArray(allTests) ? allTests : [];
     const testRequest = {
       id: 'HOME-' + Math.floor(Math.random() * 9000 + 1000),
       patientId: newPatient.id,
       patientName: formData.fullName,
       patientPhone: formData.phone,
       testName: 'طلب تحليل منزلي',
-      // نؤكد الاستلام مباشرةً ونضع الحالة قيد الانتظار ليعلم الموظفون بوجود طلب جديد
       status: 'قيد الانتظار',
       date: new Date().toLocaleDateString('en-CA'),
       location: formData.location || undefined,
       notes: 'تم الطلب عبر نموذج التحليل المنزلي'
     };
 
-    allTests.push(testRequest);
-    localStorage.setItem('lab_all_tests', JSON.stringify(allTests));
+    testsArray.push(testRequest);
+    await saveData('lab/all_tests', testsArray);
 
-    // إنشاء إشعار للموظفين حتى يتابعوا مع المريض (يُحفَظ في localStorage)
+    // إنشاء إشعار للموظفين (Firebase)
     try {
-      const staffNotifs = JSON.parse(localStorage.getItem('lab_staff_notifications') || '[]');
+      const staffNotifs = await getData('lab/staff_notifications') || [];
+      const notifsArray = Array.isArray(staffNotifs) ? staffNotifs : [];
       const notif = {
         id: 'N-' + Math.random().toString(36).substr(2, 9),
         patientName: formData.fullName,
         patientPhone: formData.phone,
         testRequestId: testRequest.id,
-        status: 'new', // new | contacted
+        status: 'new',
         createdAt: new Date().toISOString(),
         location: formData.location || null
       };
-      staffNotifs.unshift(notif);
-      localStorage.setItem('lab_staff_notifications', JSON.stringify(staffNotifs));
+      notifsArray.unshift(notif);
+      await saveData('lab/staff_notifications', notifsArray);
 
-      // حاول إيجاد أرقام الموظفين من managed accounts لإرسال رسالة واتساب سريعة (إن وُجدت)
-      const managed = JSON.parse(localStorage.getItem('lab_managed_accounts') || '{}');
-      const staffPhones = Object.keys(managed)
-        .map(k => managed[k].phone)
+      // حاول إيجاد أرقام الموظفين من managed accounts
+      const managedAccounts = await getData('lab/managed_accounts') || {};
+      const staffPhones = Object.keys(managedAccounts)
+        .map(k => managedAccounts[k].phone)
         .filter(Boolean);
 
       if (staffPhones.length > 0) {
         const staffPhone = staffPhones[0].toString().replace(/^0/, '20');
         const baseURL = window.location.origin + '/admin';
         const staffMsg = `⚠️ *طلب جديد من بوابة التحليل المنزلي*%0A%0A👤 الاسم: ${formData.fullName}%0A📞 الهاتف: ${formData.phone}%0A🆔 رقم الطلب: ${testRequest.id}%0A%0A📍 موقع (إن وُجد): ${formData.location ? `${formData.location.lat.toFixed(4)}, ${formData.location.lng.toFixed(4)}` : 'غير محدد'}%0A%0A👉 افتح لوحة الإدارة: ${baseURL}`;
-        // نفتح نافذة واتساب للموظف الأول لإعلامه بشكل فوري
         window.open(`https://wa.me/+${staffPhone}?text=${staffMsg}`, '_blank');
       }
     } catch (err) {
