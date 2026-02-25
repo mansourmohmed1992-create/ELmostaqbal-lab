@@ -2,14 +2,20 @@
 import React, { useState, useEffect } from 'react';
 import { UserPlus, Shield, User as UserIcon, Trash2, Key, Users, CheckCircle2, MessageCircle, MapPin, Clock, Upload, FileText, Image as ImageIcon, X, Eye } from 'lucide-react';
 import { User, UserRole, LabTest } from '../types';
-import { getData, saveData, subscribeToData } from '../services/firebaseService';
+import { getData, saveData, subscribeToData, createUserByAdmin } from '../services/firebaseService';
 
 const Admin = () => {
   // تحميل الحسابات من localStorage لضمان استمرارها
   const [users, setUsers] = useState<User[]>([]);
   const [showAddUser, setShowAddUser] = useState(false);
-  const [newUser, setNewUser] = useState({ name: '', username: '', password: '', role: UserRole.EMPLOYEE });
+  const [newUser, setNewUser] = useState({ 
+    name: '', 
+    email: '', 
+    password: '', 
+    role: UserRole.EMPLOYEE 
+  });
   const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const [bookingRequests, setBookingRequests] = useState<LabTest[]>([]);
   const [pendingResults, setPendingResults] = useState<LabTest[]>([]);
   const [staffNotifs, setStaffNotifs] = useState<any[]>([]);
@@ -85,38 +91,48 @@ const Admin = () => {
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
     
-    const managed = await getData('lab/managed_accounts') || {};
-    
-    if (managed[newUser.username]) {
-      alert("اسم المستخدم هذا موجود بالفعل!");
+    // التحقق من البيانات
+    if (!newUser.name.trim()) {
+      setErrorMsg('الرجاء إدخال الاسم الكامل');
       return;
     }
-
-    const userId = Math.random().toString(36).substr(2, 9);
+    if (!newUser.email.trim()) {
+      setErrorMsg('الرجاء إدخال البريد الإلكتروني');
+      return;
+    }
+    if (!newUser.password.trim() || newUser.password.length < 8) {
+      setErrorMsg('كلمة المرور يجب أن تكون 8 أحرف على الأقل');
+      return;
+    }
     
-    // إضافة الحساب الجديد إلى Firebase
-    managed[newUser.username] = {
-      id: userId,
-      password: newUser.password,
-      name: newUser.name,
-      role: newUser.role
-    };
-
-    await saveData('lab/managed_accounts', managed);
-
-    const updatedUser: User = {
-      id: userId,
-      name: newUser.name,
-      username: newUser.username,
-      role: newUser.role
-    };
-
-    setUsers([...users, updatedUser]);
-    setShowAddUser(false);
-    setNewUser({ name: '', username: '', password: '', role: UserRole.EMPLOYEE });
-    setSuccessMsg('تم إنشاء الحساب بنجاح، يمكن للمستخدم الدخول الآن.');
-    setTimeout(() => setSuccessMsg(''), 3000);
+    // إنشاء المستخدم في Firebase
+    const result = await createUserByAdmin(
+      newUser.email,
+      newUser.password,
+      newUser.name,
+      newUser.role
+    );
+    
+    if (result.success) {
+      // إضافة المستخدم للقائمة المحلية
+      const newUserObj: User = {
+        id: result.uid || '',
+        name: newUser.name,
+        username: newUser.email.split('@')[0],
+        role: newUser.role
+      };
+      
+      setUsers([...users, newUserObj]);
+      setNewUser({ name: '', email: '', password: '', role: UserRole.EMPLOYEE });
+      setShowAddUser(false);
+      setSuccessMsg(`✅ تم إنشاء المستخدم ${newUser.name} بنجاح!`);
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } else {
+      setErrorMsg(result.error || 'حدث خطأ في إنشاء المستخدم');
+    }
   };
 
   const handleDeleteUser = async (username: string) => {
@@ -555,29 +571,79 @@ const Admin = () => {
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
           <div className="bg-white rounded-[3rem] w-full max-w-md p-10 shadow-2xl animate-slideUp">
             <h3 className="text-2xl font-black mb-6 text-gray-900 border-b border-gray-100 pb-4">إضافة حساب جديد</h3>
+            
+            {errorMsg && (
+              <div className="mb-4 p-4 bg-red-50 text-red-700 rounded-2xl font-bold text-center text-sm border border-red-100">
+                ⚠️ {errorMsg}
+              </div>
+            )}
+            
             <form onSubmit={handleAddUser} className="space-y-4">
               <div className="space-y-1">
                 <label className="text-xs font-black text-gray-400 mr-2 uppercase">الاسم الكامل</label>
-                <input required type="text" className="w-full px-5 py-4 bg-gray-50 border border-transparent rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} />
+                <input 
+                  required 
+                  type="text" 
+                  className="w-full px-5 py-4 bg-gray-50 border border-transparent rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold" 
+                  value={newUser.name} 
+                  onChange={e => setNewUser({...newUser, name: e.target.value})} 
+                />
               </div>
+              
               <div className="space-y-1">
-                <label className="text-xs font-black text-gray-400 mr-2 uppercase">اسم المستخدم (للدخول)</label>
-                <input required type="text" className="w-full px-5 py-4 bg-gray-50 border border-transparent rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})} />
+                <label className="text-xs font-black text-gray-400 mr-2 uppercase">البريد الإلكتروني</label>
+                <input 
+                  required 
+                  type="email" 
+                  className="w-full px-5 py-4 bg-gray-50 border border-transparent rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold" 
+                  placeholder="مثال@domain.com"
+                  value={newUser.email} 
+                  onChange={e => setNewUser({...newUser, email: e.target.value})} 
+                />
               </div>
+              
               <div className="space-y-1">
-                <label className="text-xs font-black text-gray-400 mr-2 uppercase">كلمة المرور</label>
-                <input required type="text" className="w-full px-5 py-4 bg-gray-50 border border-transparent rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} />
+                <label className="text-xs font-black text-gray-400 mr-2 uppercase">كلمة المرور (8 أحرف على الأقل)</label>
+                <input 
+                  required 
+                  type="password" 
+                  className="w-full px-5 py-4 bg-gray-50 border border-transparent rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold" 
+                  placeholder="••••••••"
+                  minLength={8}
+                  value={newUser.password} 
+                  onChange={e => setNewUser({...newUser, password: e.target.value})} 
+                />
               </div>
+              
               <div className="space-y-1">
                 <label className="text-xs font-black text-gray-400 mr-2 uppercase">نوع الصلاحية</label>
-                <select className="w-full px-5 py-4 bg-gray-50 border border-transparent rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold appearance-none" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as any})}>
-                  <option value={UserRole.EMPLOYEE}>موظف (إدارة المختبر)</option>
-                  <option value={UserRole.CLIENT}>عميل (رؤية نتائج فقط)</option>
+                <select 
+                  className="w-full px-5 py-4 bg-gray-50 border border-transparent rounded-2xl focus:ring-2 focus:ring-blue-500 font-bold appearance-none" 
+                  value={newUser.role} 
+                  onChange={e => setNewUser({...newUser, role: e.target.value as any})}
+                >
+                  <option value={UserRole.EMPLOYEE}>📋 موظف - إدارة المختبر</option>
+                  <option value={UserRole.CLIENT}>👤 عميل - عرض النتائج فقط</option>
                 </select>
               </div>
+              
               <div className="flex gap-4 pt-6">
-                <button type="submit" className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black hover:bg-blue-700 shadow-xl shadow-blue-100 transition-all">إنشاء</button>
-                <button type="button" onClick={() => setShowAddUser(false)} className="flex-1 bg-gray-100 text-gray-500 py-4 rounded-2xl font-black">إلغاء</button>
+                <button 
+                  type="submit" 
+                  className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black hover:bg-blue-700 shadow-xl shadow-blue-100 transition-all"
+                >
+                  ✅ إنشاء المستخدم
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setShowAddUser(false);
+                    setErrorMsg('');
+                  }} 
+                  className="flex-1 bg-gray-100 text-gray-500 py-4 rounded-2xl font-black"
+                >
+                  إلغاء
+                </button>
               </div>
             </form>
           </div>

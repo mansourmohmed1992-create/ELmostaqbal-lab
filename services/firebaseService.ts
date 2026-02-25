@@ -281,4 +281,63 @@ export const subscribeToData = (path: string, callback: (data: any) => void) => 
   });
 };
 
+// ============= Admin User Management =============
+export const createUserByAdmin = async (
+  email: string,
+  password: string,
+  displayName: string,
+  role: UserRole
+): Promise<{
+  success: boolean;
+  uid?: string;
+  error?: string;
+}> => {
+  try {
+    // إنشاء المستخدم في Firebase Authentication
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const uid = userCredential.user.uid;
+    
+    // إنشاء ملف المستخدم في Realtime Database
+    const userProfile: UserProfile = {
+      uid: uid,
+      email: email,
+      displayName: displayName,
+      role: role,
+      createdAt: new Date().toISOString(),
+      lastLogin: new Date().toISOString()
+    };
+    
+    await set(ref(db, `users/${uid}`), userProfile);
+    
+    return {
+      success: true,
+      uid: uid
+    };
+  } catch (error: any) {
+    // معالجة الأخطاء الشائعة
+    if (error.code === 'auth/email-already-in-use') {
+      return {
+        success: false,
+        error: 'هذا البريد الإلكتروني مسجل بالفعل'
+      };
+    }
+    if (error.code === 'auth/weak-password') {
+      return {
+        success: false,
+        error: 'كلمة المرور ضعيفة (8 أحرف على الأقل)'
+      };
+    }
+    if (error.code === 'auth/invalid-email') {
+      return {
+        success: false,
+        error: 'صيغة البريد الإلكتروني غير صحيحة'
+      };
+    }
+    return {
+      success: false,
+      error: error.message || 'حدث خطأ في إنشاء المستخدم'
+    };
+  }
+};
+
 export { auth, db };
