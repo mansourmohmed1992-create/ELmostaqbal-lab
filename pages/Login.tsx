@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { LogIn, Lock, User, FlaskConical, Eye, EyeOff } from 'lucide-react';
 import Logo from '../components/Logo';
 import { UserRole } from '../types';
-import { loginUser } from '../services/firebaseService';
+import { smartLogin } from '../services/firebaseService';
 
 interface LoginProps {
   onLogin: (user: any) => void;
@@ -23,46 +23,47 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     
     const cleanUser = username.trim();
     
-    // Keep hardcoded admin for backwards compatibility
-    if (cleanUser === 'admin' && password === 'F@res222') {
-      onLogin({ id: 'admin-main', name: 'د. فارس (مدير المختبر)', username: 'admin', role: UserRole.ADMIN });
-      setLoading(false);
-      return;
+    // تحويل اسم المستخدم إلى صيغة بريد إلكتروني
+    // إذا كان "admin" → "admin@elmostaqbal-lab.com"
+    let userEmail = cleanUser;
+    
+    // إذا لم يحتوي على @ فهو username وليس email
+    if (!cleanUser.includes('@')) {
+      userEmail = `${cleanUser}@elmostaqbal-lab.com`;
     }
-
-    // Try Firebase authentication - convert username to email format
-    const userEmail = `${cleanUser}@elmostaqbal-lab.com`;
-    const result = await loginUser(userEmail, password);
+    
+    // استخدام نظام Smart Login (Auto-Create للعملاء الجدد)
+    const result = await smartLogin(userEmail, password);
     
     if (result.success && result.user) {
-      // Fetch user additional data from Firebase
-      onLogin({ 
-        id: result.user?.uid || 'u_' + cleanUser, 
-        name: result.user?.displayName || cleanUser, 
-        username: cleanUser, 
+      // تحديد الدور من النتيجة
+      const roleMapping: Record<string, UserRole> = {
+        'ADMIN': UserRole.ADMIN,
+        'EMPLOYEE': UserRole.EMPLOYEE,
+        'CLIENT': UserRole.CLIENT
+      };
+      
+      const userRole = roleMapping[result.role || 'CLIENT'] || UserRole.CLIENT;
+      
+      const displayName = result.isNewUser 
+        ? `${cleanUser} (حساب جديد)`
+        : result.user?.displayName || cleanUser;
+      
+      onLogin({
+        id: result.user?.uid,
+        name: displayName,
+        username: cleanUser,
         email: userEmail,
-        role: UserRole.CLIENT // Default role, should be fetched from Firebase
+        role: userRole,
+        isNewUser: result.isNewUser
       });
+      
       setLoading(false);
       return;
     }
 
-    // Fallback: try localStorage for existing accounts
-    const managedAccounts = JSON.parse(localStorage.getItem('lab_managed_accounts') || '{}');
-    const userAccount = managedAccounts[cleanUser];
-
-    if (userAccount && userAccount.password === password) {
-      onLogin({ 
-        id: userAccount.id || 'u_' + cleanUser, 
-        name: userAccount.name, 
-        username: cleanUser, 
-        role: userAccount.role 
-      });
-      setLoading(false);
-      return;
-    }
-
-    setError('خطأ في بيانات الدخول. يرجى مراجعة الإدارة.');
+    // معالجة الأخطاء
+    setError(result.error || 'خطأ في تسجيل الدخول');
     setLoading(false);
   };
 
